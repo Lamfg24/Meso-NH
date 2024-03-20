@@ -101,6 +101,15 @@ cies.
 
 #### REF 
 
+![](/REF/ref_mass_distrib.png)
+![](/REF/ref_modal_distrib.png)
+
 #### POL
 
+![](/POL/POL_mass_distib.jpg)
+![](/POL/pol_modal_distib.png)
+
 #### CLEAN
+
+![](/CLEAN/CLEAN_mass_distib.jpg)
+![](/CLEAN/clean_modal_distib.png)
