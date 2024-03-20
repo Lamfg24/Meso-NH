@@ -62,6 +62,34 @@ the cloud fraction.
 
 ### Meso-NH
 
+Meso-NH is a French non hydrostatic atmospheric research model used in research studies
+ranging from synoptic to turbulent scales developed by the Centre National de Recherches
+Météorologiques (CNRM) and the Laboratoire d’Aérologie (LAERO) (Lafore et al., 1998;
+Lac et al., 2018). The model can simulate real (realistic meteorological situations) or ide-
+alized (simulations starting from highly idealized conditions, such as an atmosphere in
+geostrophic equilibrium, with simple vertical and horizontal structure, and simple orog-
+raphy, or no orography at all) cases which can be used from 1D to 3D. The model uses
+three prognostic variables like three velocity terms (u,v,w), the potential temperature and
+mixing ratios of some species like vapor, cloud droplets, raindroplets, ice crystals, snow,
+graupel and hail. Turbulent kinetic energy (TKE) is also used and other reactive and
+passive scalars like aerosols and hydrometeors concentration or chemical species. Meso-NH
+conserves the grid nesting technique in order to simulate scale interactions. The software
+is maintained and improved by computer and research team from CNRM and LAERO.
+Code and scripts are written in Fortan 90 and shell respectively and use makefiles. Paral-
+lelization has been applied on much of the soft using the Message Passing Interface (MPI).
+Meso-NH is organized in three blocks corresponding to three steps. The first step is the
+preparation of the simulation when the user has to compose initial fields for idealized or
+real conditions and also the preparation of the nesting application. The second step is
+the running of the simulation starting with an initialization step and then the simulation
+is integrated. A post-processing step is able to compute supplementary diagnostic fields.
+Meso-NH needs atmospheric initial and boundary conditions. These so called Large-Scale
+(LS) fields are used to initialize prognostic variables and force them at lateral boundaries
+with time-evolving fields. For real cases, AROME, ARPEGE, ECMWF and also GFS suits
+data suits well. For ideal case, initial vertical profiles derived usually from radiosounding
+data are then interpolated horizontally and vertically onto the Meso-NH grid. The forcing
+methods implemented are from geostrophic winds to large-scale thermodynamical tenden-
+cies.
+
 ### Using only LIMA
 
 ### Using ORILAM 
