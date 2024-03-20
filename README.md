@@ -58,7 +58,7 @@ the cloud fraction.
 
 ### Introduction
 
-/Pictures/LLCS_3_july_meas.png
+![](/Pictures/LLCS_3_july_meas.png)
 
 ### Meso-NH
 
