@@ -58,6 +58,8 @@ the cloud fraction.
 
 ### Introduction
 
+/Pictures/LLCS_3_july_meas.png
+
 ### Meso-NH
 
 ### Using only LIMA
