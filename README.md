@@ -107,9 +107,9 @@ cies.
 #### POL
 
 ![](/POL/POL_mass_distib.jpg)
-![](/POL/pol_modal_distib.png)
+![](/POL/pol_modal_distrib.png)
 
 #### CLEAN
 
 ![](/CLEAN/CLEAN_mass_distib.jpg)
-![](/CLEAN/clean_modal_distib.png)
+![](/CLEAN/clean_modal_distrib.png)
