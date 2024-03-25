@@ -1,0 +1,117 @@
+&NAM_CONFZ MPI_BUFFER_SIZE=400 , LMNH_MPI_BSEND = F, LMNH_MPI_ALLTOALLV_REMAP = T /
+
+&NAM_CONF  CCONF = "RESTA", NVERB=1, NMODEL = 1,
+            CEXP = "DACC7", CSEG = "AEROF" , LFORCING = .TRUE., NHALO=3, JPHEXT=3,
+            CSPLIT="BSPLITTING" /
+
+
+&NAM_CONFIO LCDF4 = .TRUE., LLFIOUT = .FALSE., NIO_ABORT_LEVEL=1, NGEN_ABORT_LEVEL=1 /
+
+&NAM_DYN XSEGLEN = 10800.,
+         LCORIO = T,
+         LNUMDIFU = F,
+         XALZBOT = 1800./
+
+&NAM_LUNITn CINIFILE = "DACC6.1.AEROF.004", CINIFILEPGD = "initial_file_pgd" /
+
+&NAM_DYNn  XTSTEP = 2.0,
+           CPRESOPT = "ZRESI",
+           NITR = 24,
+           LHORELAX_UVWTH = F, LHORELAX_RV = F, LVE_RELAX = F,
+           NRIMX = 5, NRIMY = 5, XRIMKMAX = 0.01 /
+
+&NAM_FRC LRELAX_UV_FRC=F , LRELAX_THRV_FRC=F, LTEND_THRV_FRC=T,  LVERT_MOTION_FRC=T, XRELAX_TIME_FRC=1.0/
+
+&NAM_ADVn  CUVW_ADV_SCHEME="CEN4TH",NWENO_ORDER=5,CTEMP_SCHEME="RKC4",
+           CMET_ADV_SCHEME = "PPM_01", CSV_ADV_SCHEME = "PPM_01" /
+
+&NAM_PARAMn  CCLOUD = "LIMA", CTURB = "TKEL", CRAD = "ECMW",
+             CDCONV = "NONE", CSCONV="NONE" /
+
+&NAM_PARAM_LIMA LCOLD = F,
+                LCCN_HOM = .FALSE.,
+                NMOD_CCN = 2,
+                CCCN_MODES='BACK'
+                XCCN_CONC(1) = 654.,
+                XCCN_CONC(2) = 1530.,
+                HINI_CCN='AER',
+                HTYPE_CCN(1) = 'DAC_CONT',
+                HTYPE_CCN(2) = 'DAC_CONT',
+                XALPHAC=3.0,
+                XNUC=2.0 /
+                
+&NAM_PARAM_RADn  XDTRAD = 600., XDTRAD_CLONLY = 600., NRAD_COLNBR = 400, CAER = "NONE", CAOP="CLIM"  /
+
+&NAM_PARAM_ECRADn NAERMACC = 0/
+
+&NAM_LBCn  CLBCX = 2*"CYCL", CLBCY = 2*"CYCL" /
+
+&NAM_TURBn   CTURBLEN = "DEAR", CTURBDIM = "3DIM",
+    CSUBG_AUCV='NONE', LSUBG_COND=F, LSIGMAS=T, LSIG_CONV = .F., LTURB_FLX=F /
+
+&NAM_BLANK CDUMMY1="DACCIWA" /
+
+&NAM_SALT LSALT = F/
+
+&NAM_DUST LDUST = F/
+    
+&NAM_BACKUP XBAK_TIME(1,1)=0. ,
+            XBAK_TIME(1,2)=3600. ,
+            XBAK_TIME(1,3)=7200. ,
+            XBAK_TIME(1,4)=10800. ,
+            XBAK_TIME(1,5)=14400. ,
+            XBAK_TIME(1,6)=18000. ,
+            XBAK_TIME(1,7)=21600. ,
+            XBAK_TIME(1,8)=25200. ,
+            XBAK_TIME(1,9)=28800. ,
+            XBAK_TIME(1,10)=32400. ,
+            XBAK_TIME(1,11)=36000.,
+            XBAK_TIME(1,12)=39600.,
+            XBAK_TIME(1,13)=43200.,
+            XBAK_TIME(1,14)=46800.,
+            XBAK_TIME(1,15)=50400.,
+            XBAK_TIME(1,16)=54000.,
+            XBAK_TIME(1,17)=57600.,
+            XBAK_TIME(1,18)=61200.,
+            XBAK_TIME(1,19)=64800.,
+            XBAK_TIME(1,20)=68400.,
+            XBAK_TIME(1,21)=72000.,
+            XBAK_TIME(1,22)=75600.,
+            XBAK_TIME(1,23)=79200.,
+            XBAK_TIME(1,24)=82800.,
+            XBAK_TIME(1,25)=86400.,
+            XBAK_TIME(1,26)=90000.,
+            XBAK_TIME(1,27)=93600.,
+            XBAK_TIME(1,28)=97200.,
+            XBAK_TIME(1,29)=100800.,
+            XBAK_TIME(1,30)=104400.,
+            XBAK_TIME(1,31)=108000.,
+            XBAK_TIME(1,32)=111600.,
+            XBAK_TIME(1,33)=115200.,
+            XBAK_TIME(1,34)=118800.,
+            XBAK_TIME(1,35)=122400.,
+            XBAK_TIME(1,36)=126000.,
+            XBAK_TIME(1,37)=129600.,
+            XBAK_TIME(1,38)=133200.,
+            XBAK_TIME(1,39)=136800.,
+            XBAK_TIME(1,40)=140400.,
+            XBAK_TIME(1,41)=144000.,
+            XBAK_TIME(1,42)=147600.,
+            XBAK_TIME(1,43)=151200.,
+            XBAK_TIME(1,44)=154800.,
+            XBAK_TIME(1,45)=158400.,
+            XBAK_TIME(1,46)=162000.,
+            XBAK_TIME(1,47)=165600.,
+            XBAK_TIME(1,48)=169200.,
+            XBAK_TIME(1,49)=172800./ 
+
+
+&NAM_CH_ISBAn   CCH_DRY_DEP="WES89" /
+
+&NAM_CH_SEAFLUXn CCH_DRY_DEP="WES89" /
+
+&NAM_CH_WATFLUXn CCH_DRY_DEP="WES89" /
+
+&NAM_CH_TEBn     CCH_DRY_DEP="WES89" / 
+
+
