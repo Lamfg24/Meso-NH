@@ -5,11 +5,3 @@ This work is licensed under a Creative Commons Attribution 4.0 International Lic
 In case the data are used in research and publications we would appreciate when the following statement is added: "The research leading to these results has received funding from the European Union Seventh Framework Programme FP7/2007-2013) under grant agreement n° 603502."
 
 We would welcome data users to offer co-authorship to the data producers in case that the data make a substantial contribution to a publication. Please contact the main data PI to discuss this.
-
-
-
-Version 1 :
-Changes made: Standard deviation for all variables added
-                           Correct calculation of longwave upwelling and downwelling radiation
-                           Elimination of several outliers in the data (both longwave and shortwave radiation).
-If you need a more detailed information, just contact  martin.kohler@kit.edu
