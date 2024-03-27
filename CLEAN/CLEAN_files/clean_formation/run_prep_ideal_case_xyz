@@ -1,0 +1,7 @@
+#!/bin/sh
+set -x
+set -e
+rm -f initial_file* OUTPUT_LISTING* pipe* *.tex
+#export MPIRUN="mpirun -np 4 " 
+time ${MPIRUN} PREP_IDEAL_CASE${XYZ}
+#ddd --directory=~/.... PREP_PGD
