@@ -1,1 +1,5 @@
-
+Version 1 :
+Changes made: Standard deviation for all variables added
+                           Correct calculation of longwave upwelling and downwelling radiation
+                           Elimination of several outliers in the data (both longwave and shortwave radiation).
+If you need a more detailed information, just contact  martin.kohler@kit.edu
