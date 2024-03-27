@@ -1,0 +1,585 @@
+! radiation_driver.f90 - Driver for offline ECRAD radiation scheme
+!
+! Copyright (C) 2014-2017 ECMWF
+!
+! Author:  Robin Hogan
+! Email:   r.j.hogan@ecmwf.int
+! License: see the COPYING file for details
+!
+! ECRAD is the radiation scheme used in the ECMWF Integrated
+! Forecasting System in cycle 43R3 and later. Several solvers are
+! available, including McICA, Tripleclouds and SPARTACUS (the Speedy
+! Algorithm for Radiative Transfer through Cloud Sides, a modification
+! of the two-stream formulation of shortwave and longwave radiative
+! transfer to account for 3D radiative effects). Gas optical
+! properties are provided by the RRTM-G gas optics scheme.
+
+! This program takes three arguments:
+! 1) Namelist file to configure the radiation calculation
+! 2) Name of a NetCDF file containing one or more atmospheric profiles
+! 3) Name of output NetCDF file
+
+program radiation_driver
+
+  use parkind1,                 only : jprb ! Working precision
+
+  use radiation_io,             only : nulout
+  use radiation_interface,      only : setup_radiation, radiation, set_gas_units
+  use radiation_config,         only : config_type
+  use radiation_single_level,   only : single_level_type
+  use radiation_thermodynamics, only : thermodynamics_type
+  use radiation_gas,            only : gas_type, &
+       &   IVolumeMixingRatio, IMassMixingRatio, &
+       &   IH2O, ICO2, IO3, IN2O, ICO, ICH4, IO2, ICFC11, ICFC12, &
+       &   IHCFC22, ICCl4, GasName, GasLowerCaseName, NMaxGases
+  use radiation_cloud,          only : cloud_type
+  use radiation_aerosol,        only : aerosol_type
+  use radiation_flux,           only : flux_type
+  use radiation_save,           only : save_fluxes, save_inputs
+! An older version of this driver file provided access to the
+! Pincus-Stevens radiation scheme, but this is no longer supported
+#ifdef HAVE_PSRAD
+  use radiation_psrad,          only : psrad
+#endif
+
+  use radiation_driver_config,  only : driver_config_type
+  use easy_netcdf
+
+  implicit none
+
+  ! The NetCDF file containing the input profiles
+  type(netcdf_file)         :: file
+
+  ! Derived types for the inputs to the radiation scheme
+  type(config_type)         :: config
+  type(single_level_type)   :: single_level
+  type(thermodynamics_type) :: thermodynamics
+  type(gas_type)            :: gas
+  type(cloud_type)          :: cloud
+  type(aerosol_type)        :: aerosol
+
+  ! Configuration specific to this driver
+  type(driver_config_type)  :: driver_config
+
+  ! Derived type containing outputs from the radiation scheme
+  type(flux_type)           :: flux
+
+  integer :: ncol, nlev         ! Number of columns and levels
+  integer :: istartcol, iendcol ! Range of columns to process
+  integer :: jgas               ! Loop index for reading gases
+  integer :: irank              ! Dimensions of gas data
+  integer :: ngases             ! Num of gases with concs described in 2D
+  integer :: nwellmixedgases    ! Num of globally well-mixed gases
+
+  ! Mixing ratio of gases described in 2D (ncol,nlev); this is volume
+  ! mixing ratio (m3/m3) except for water vapour and ozone for which
+  ! it is mass mixing ratio (kg/kg)
+  real(jprb), allocatable, dimension(:,:) :: gas_mr
+
+  ! Volume mixing ratio (m3/m3) of globally well-mixed gases
+  real(jprb)                              :: well_mixed_gas_vmr
+
+  ! Cloud overlap decorrelation length (m)
+  real(jprb), parameter :: decorr_length_default = 2000.0_jprb
+
+  ! Name of file names specified on command line
+  character(len=512) :: file_name
+  integer            :: istatus ! Result of command_argument_count
+
+  ! Volume mixing ratios stored in NetCDF files with names suffixed by
+  ! this
+  character(len=*), parameter :: conc_unit_suffix_str = '_vmr'
+
+  ! Name of gas concentration variable in the file
+  character(20)               :: gas_var_name
+
+  ! For parallel processing of multiple blocks
+  integer :: jblock, nblock ! Block loop index and number
+  integer, external :: omp_get_thread_num
+
+  ! Loop index for repeats (for benchmarking)
+  integer :: jrepeat
+
+  ! Are the fluxes out of bounds?
+  logical :: is_out_of_bounds
+
+!  integer    :: iband(20), nweights
+!  real(jprb) :: weight(20)
+
+  ! Check program called with correct number of arguments
+  if (command_argument_count() < 3) then
+    stop 'Usage: radiation_driver config.nam input_file.nc output_file.nc'
+  end if
+
+  ! Use namelist to configure the radiation calculation
+  call get_command_argument(1, file_name, status=istatus)
+  if (istatus /= 0) then
+    stop 'Failed to read name of namelist file as string of length < 512'
+  end if
+
+  ! Read "radiation" namelist into radiation configuration type
+  call config%read(file_name=file_name)
+
+  ! Read "radiation_driver" namelist into radiation driver config type
+  call driver_config%read(file_name)
+
+  ! Cannot save spectral fluxes with PS-Rad output
+  if (driver_config%use_psrad) then
+    config%do_save_spectral_flux = .false.
+    config%do_surface_sw_spectral_flux = .false.
+  end if
+
+  if (driver_config%iverbose >= 2) then
+    write(nulout,'(a)') '----------------- OFFLINE ECRAD RADIATION SCHEME -----------------'
+    write(nulout,'(a)') 'Copyright (C) 2014-2017 ECMWF'
+    write(nulout,'(a)') 'Contact: Robin Hogan (r.j.hogan@ecmwf.int)'
+    if (.not. driver_config%use_psrad) then
+      write(nulout,'(a)') 'Configuration options:'
+      call config%print(driver_config%iverbose)
+    else 
+      write(nulout,'(a)') 'Using PS-Rad radiation scheme'
+    end if
+  end if
+
+  ! Get NetCDF input file name
+  call get_command_argument(2, file_name, status=istatus)
+  if (istatus /= 0) then
+    stop 'Failed to read name of input NetCDF file as string of length < 512'
+  end if
+
+  ! Open the file and configure the way it is read
+  call file%open(trim(file_name), iverbose=driver_config%iverbose)
+
+  ! Get NetCDF output file name
+  call get_command_argument(3, file_name, status=istatus)
+  if (istatus /= 0) then
+    stop 'Failed to read name of output NetCDF file as string of length < 512'
+  end if
+
+  ! 2D arrays are assumed to be stored in the file with height varying
+  ! more rapidly than column index. Specifying "true" here transposes
+  ! all 2D arrays so that the column index varies fastest within the
+  ! program.
+  call file%transpose_matrices(.true.)
+
+  ! The following calls read in the data, allocating memory for 1D and
+  ! 2D arrays.  The program will stop if any variables are not found.
+
+  ! Pressure and temperature (SI units) are on half-levels, i.e. of
+  ! length (ncol,nlev+1)
+  call file%get('pressure_hl',   thermodynamics%pressure_hl)
+  call file%get('temperature_hl',thermodynamics%temperature_hl)
+
+  ! Read cloud descriptors, all with dimensions (ncol, nlev)
+  call file%get('q_liquid',      cloud%q_liq)   ! kg/kg
+!+marine
+!  call file%get('q_ice',         cloud%q_ice)   ! kg/kg
+  call file%get('q_ice_shape_1', cloud%q_ice_shape_1)   ! kg/kg
+  call file%get('q_ice_shape_2', cloud%q_ice_shape_2)   ! kg/kg
+  call file%get('q_ice_shape_3', cloud%q_ice_shape_3)   ! kg/kg
+  call file%get('q_ice_shape_4', cloud%q_ice_shape_4)   ! kg/kg
+!- marine
+  call file%get('cloud_fraction',cloud%fraction)
+  call file%get('re_liquid',     cloud%re_liq)  ! m
+!+ marine
+!  call file%get('re_ice',        cloud%re_ice)  ! m
+  call file%get('re_ice_shape_1',cloud%re_ice_shape_1)  ! m
+  call file%get('re_ice_shape_2',cloud%re_ice_shape_2)  ! m
+  call file%get('re_ice_shape_3',cloud%re_ice_shape_3)  ! m
+  call file%get('re_ice_shape_4',cloud%re_ice_shape_4)  ! m
+!- marine
+
+  ! 3D radiative effects are governed by the length of cloud edge per
+  ! area of gridbox, which is characterized by the inverse of the
+  ! cloud effective size (m-1)
+  if (file%exists('inv_cloud_effective_size')) then
+    call file%get('inv_cloud_effective_size', cloud%inv_cloud_effective_size)
+  end if
+
+  ! Fractional standard deviation of in-cloud water content
+  if (file%exists('fractional_std')) then
+    call file%get('fractional_std', cloud%fractional_std)
+  end if
+
+  ! Shonk et al. (2010) 'beta' overlap parameter
+  if (file%exists('overlap_param')) then
+    call file%get('overlap_param', cloud%overlap_param)
+  end if
+
+  ! Single-level variables, all with dimensions (ncol)
+  call file%get('cos_solar_zenith_angle',single_level%cos_sza)
+  call file%get('skin_temperature',single_level%skin_temperature) ! K
+
+  ! Shortwave albedo is stored with dimensions (ncol,nalbedobands)
+  if (file%get_rank('sw_albedo') == 1) then
+    ! ...but if in the NetCDF file it has only dimension (ncol), in
+    ! order that nalbedobands is correctly set to 1, we need to turn
+    ! off transposition
+    call file%get('sw_albedo',    single_level%sw_albedo, do_transp=.false.)
+    if (file%exists('sw_albedo_direct')) then
+      call file%get('sw_albedo_direct', single_level%sw_albedo_direct, do_transp=.false.)
+    end if
+  else
+    call file%get('sw_albedo',    single_level%sw_albedo, do_transp=.true.)
+    if (file%exists('sw_albedo_direct')) then
+      call file%get('sw_albedo_direct', single_level%sw_albedo_direct, do_transp=.true.)
+    end if
+  end if
+
+  ! Longwave emissivity
+  if (file%get_rank('lw_emissivity') == 1) then
+    call file%get('lw_emissivity',single_level%lw_emissivity, do_transp=.false.)
+  else
+    call file%get('lw_emissivity',single_level%lw_emissivity, do_transp=.true.)
+  end if
+
+  if (file%exists('solar_irradiance')) then
+    call file%get('solar_irradiance', single_level%solar_irradiance)
+  else
+    single_level%solar_irradiance = 1366.0_jprb
+  end if
+
+  if (config%use_aerosols) then
+    ! Load aerosol data
+    call file%get('aerosol_mmr', aerosol%mixing_ratio, ipermute=(/2,3,1/));
+    ! Store aerosol level bounds
+    aerosol%istartlev = lbound(aerosol%mixing_ratio, 2)
+    aerosol%iendlev   = ubound(aerosol%mixing_ratio, 2)
+  end if
+
+  ! Extract array dimensions
+  ncol = size(single_level%cos_sza)
+  nlev = size(cloud%fraction,2)
+
+  ! Some variables can be overridden by namelist parameters (see
+  ! driver_config.F90 for details), e.g. the inverse of the cloud
+  ! effective size
+  if (driver_config%low_inv_effective_size_override >= 0.0_jprb) then
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3,a)') '  Overriding inverse cloud effective size with:'
+      write(nulout,'(a,g10.3,a)') '    ', driver_config%low_inv_effective_size_override, &
+           &       ' m-1 (low clouds)'
+      write(nulout,'(a,g10.3,a)') '    ', driver_config%middle_inv_effective_size_override, &
+           &       ' m-1 (mid-level clouds)'
+      write(nulout,'(a,g10.3,a)') '    ', driver_config%high_inv_effective_size_override, &
+           &       ' m-1 (high clouds)'
+    end if
+    call cloud%create_inv_cloud_effective_size_eta(ncol, nlev, &
+         &  thermodynamics%pressure_hl, &
+         &  driver_config%low_inv_effective_size_override, &
+         &  driver_config%middle_inv_effective_size_override, &
+         &  driver_config%high_inv_effective_size_override, 0.8_jprb, 0.45_jprb)
+  else if (.not. allocated(cloud%inv_cloud_effective_size)) then
+    call cloud%create_inv_cloud_effective_size(ncol, nlev, 0.0_jprb)
+    if (driver_config%iverbose >= 1) then
+      write(nulout,'(a)') 'Warning: inverse cloud effective size set to zero (no 3D effects)'
+    end if
+  end if
+
+  if (driver_config%effective_size_scaling > 0.0_jprb) then
+    write(nulout, '(a,g10.3)') '  Scaling cloud effective size with ', &
+         &                           driver_config%effective_size_scaling
+    cloud%inv_cloud_effective_size = cloud%inv_cloud_effective_size &
+         &                         / driver_config%effective_size_scaling
+  end if
+
+  ! Cloud overlap is currently treated by an overlap decorrelation
+  ! length (m) that is constant everywhere, and specified in one of
+  ! the namelists
+  if (driver_config%overlap_decorr_length_override > 0.0_jprb) then
+    ! Convert overlap decorrelation length to overlap parameter between
+    ! adjacent layers, stored in cloud%overlap_param
+    call cloud%set_overlap_param(thermodynamics, &
+         &    driver_config%overlap_decorr_length_override)
+  else if (.not. allocated(cloud%overlap_param)) then 
+    if (driver_config%iverbose >= 1) then
+      write(nulout,'(a,g10.3,a)') 'Warning: overlap decorrelation length set to ', &
+           &  decorr_length_default, ' m'
+    end if
+    call cloud%set_overlap_param(thermodynamics, decorr_length_default)
+  else if (driver_config%overlap_decorr_length_scaling > 0.0_jprb) then
+    ! Scale the overlap decorrelation length by taking the overlap
+    ! parameter to a power
+!    where (cloud%overlap_param > 0.99_jprb) cloud%overlap_param = 0.99_jprb
+
+    where (cloud%overlap_param > 0.0_jprb) 
+      cloud%overlap_param = cloud%overlap_param**(1.0_jprb &
+           &                             / driver_config%overlap_decorr_length_scaling)
+    end where
+
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)')  '  Scaling overlap decorrelation length by a factor of ', &
+           &  driver_config%overlap_decorr_length_scaling
+    end if
+  end if
+
+  ! Cloud inhomogeneity is specified by the fractional standard
+  ! deviation of cloud water content, that is currently constant
+  ! everywhere (and the same for water and ice). The following copies
+  ! this constant into the cloud%fractional_std array.
+  if (driver_config%fractional_std_override >= 0.0_jprb) then
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3,a)') '  Overriding cloud fractional standard deviation with ', &
+           &  driver_config%fractional_std_override
+    end if
+    call cloud%create_fractional_std(ncol, nlev, &
+         &  driver_config%fractional_std_override)
+  else if (.not. allocated(cloud%fractional_std)) then
+    call cloud%create_fractional_std(ncol, nlev, 0.0_jprb)
+    if (driver_config%iverbose >= 1) then
+      write(nulout,'(a)') 'Warning: cloud optical depth fractional standard deviation set to zero'
+    end if
+  end if
+
+  ! Optional override of shortwave albedo
+  if (driver_config%sw_albedo_override >= 0.0_jprb) then
+    single_level%sw_albedo = driver_config%sw_albedo_override
+    if (allocated(single_level%sw_albedo_direct)) then
+      single_level%sw_albedo_direct = driver_config%sw_albedo_override
+    end if
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)') '  Overriding shortwave albedo with ', &
+           &  driver_config%sw_albedo_override
+    end if
+  end if
+
+  ! Optional override of longwave emissivity
+  if (driver_config%lw_emissivity_override >= 0.0_jprb) then
+    single_level%lw_emissivity = driver_config%lw_emissivity_override
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)')  '  Overriding longwave emissivity with ', &
+           &  driver_config%lw_emissivity_override
+    end if
+  end if
+
+  ! Optional override of skin temperature
+  if (driver_config%skin_temperature_override >= 0.0_jprb) then
+    single_level%skin_temperature = driver_config%skin_temperature_override
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)') '  Overriding skin_temperature with ', &
+           &  driver_config%skin_temperature_override
+    end if
+  end if
+
+  ! Optional override of cosine of solar zenith angle
+  if (driver_config%cos_sza_override >= 0.0_jprb) then
+    single_level%cos_sza = driver_config%cos_sza_override
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)') '  Overriding cos_sza with ', &
+           &  driver_config%cos_sza_override
+    end if
+  end if
+
+  ! Optional scaling of liquid water mixing ratio
+  if (driver_config%q_liq_scaling >= 0.0_jprb &
+       &  .and. driver_config%q_liq_scaling /= 1.0_jprb) then
+    cloud%q_liq = cloud%q_liq * driver_config%q_liq_scaling
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)')  '  Scaling liquid water mixing ratio by a factor of ', &
+           &  driver_config%q_liq_scaling
+    end if
+  end if
+
+  ! Optional scaling of ice water mixing ratio
+  if (driver_config%q_ice_scaling >= 0.0_jprb .and. driver_config%q_ice_scaling /= 1.0_jprb) then
+!+ marine
+!    cloud%q_ice = cloud%q_ice * driver_config%q_ice_scaling
+    cloud%q_ice_shape_1 = cloud%q_ice_shape_1 * driver_config%q_ice_scaling
+    cloud%q_ice_shape_2 = cloud%q_ice_shape_2 * driver_config%q_ice_scaling
+    cloud%q_ice_shape_3 = cloud%q_ice_shape_3 * driver_config%q_ice_scaling
+    cloud%q_ice_shape_4 = cloud%q_ice_shape_4 * driver_config%q_ice_scaling
+!- marine
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)')  '  Scaling ice water mixing ratio by a factor of ', &
+           &  driver_config%q_ice_scaling
+    end if
+  end if
+
+  ! Optional scaling of cloud fraction
+  if (driver_config%cloud_fraction_scaling >= 0.0_jprb &
+       &  .and. driver_config%cloud_fraction_scaling /= 1.0_jprb) then
+    cloud%fraction = cloud%fraction * driver_config%cloud_fraction_scaling
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,g10.3)')  '  Scaling cloud_fraction by a factor of ', &
+           &  driver_config%cloud_fraction_scaling
+    end if
+  end if
+
+  ! Optional override of solar irradiance
+  if (driver_config%solar_irradiance_override > 0.0_jprb) then
+    single_level%solar_irradiance = driver_config%solar_irradiance_override
+    if (driver_config%iverbose >= 3) then
+      write(nulout,'(a,f10.1)')  '  Overriding solar irradiance with ', &
+           &  driver_config%solar_irradiance_override
+    end if
+  end if
+
+  ! Load in gas volume mixing ratios, which can be either 2D arrays
+  ! (varying with height and column) or 0D scalars (constant volume
+  ! mixing ratio everywhere).
+  ngases          = 0 ! Gases with varying mixing ratio
+  nwellmixedgases = 0 ! Gases with constant mixing ratio
+
+  ! Water vapour and ozone are always in terms of mass mixing ratio
+  ! (kg/kg) and always 2D arrays with dimensions (ncol,nlev), unlike
+  ! other gases (see below)
+
+  call gas%allocate(ncol, nlev)
+
+  ! Loop through all radiatively important gases
+  do jgas = 1,NMaxGases
+    if (jgas == IH2O) then
+      call file%get('q', gas_mr)
+      call gas%put(IH2O, IMassMixingRatio, gas_mr)
+    else if (jgas == IO3) then
+      if (file%exists('o3_mmr')) then
+        call file%get('o3_mmr', gas_mr)
+        call gas%put(IO3, IMassMixingRatio, gas_mr)
+      else
+        call file%get('o3_vmr', gas_mr)
+        call gas%put(IO3, IVolumeMixingRatio, gas_mr)
+      end if
+    else
+      ! Find number of dimensions of the variable holding gas "jgas" in
+      ! the input file, where the following function returns -1 if the
+      ! gas is not found
+      gas_var_name = trim(GasLowerCaseName(jgas)) // conc_unit_suffix_str
+      irank = file%get_rank(trim(gas_var_name))
+      if (irank == 0) then
+        ! Store this as a well-mixed gas
+        call file%get(trim(gas_var_name), well_mixed_gas_vmr)
+        call gas%put_well_mixed(jgas, IVolumeMixingRatio, well_mixed_gas_vmr)
+      else if (irank == 2) then
+        call file%get(trim(gas_var_name), gas_mr)
+        call gas%put(jgas, IVolumeMixingRatio, gas_mr)
+      end if
+    end if
+    if (allocated(gas_mr)) deallocate(gas_mr)
+  end do
+
+  ! Close input file
+  call file%close()
+
+  ! Simple initialization of the seeds for the Monte Carlo scheme
+  call single_level%init_seed_simple(1,ncol)
+ 
+  ! Compute seed from skin temperature residual
+  !  single_level%iseed = int(1.0e9*(single_level%skin_temperature &
+  !       &                            -int(single_level%skin_temperature)))
+
+  ! Set first and last columns to process
+  if (driver_config%iendcol < 1 .or. driver_config%iendcol > ncol) then
+    driver_config%iendcol = ncol
+  end if
+
+  if (driver_config%istartcol > driver_config%iendcol) then
+    write(nulout,'(a,i0,a,i0,a,i0,a)') '*** Error: requested column range (', &
+         &  driver_config%istartcol, &
+         &  ' to ', driver_config%iendcol, ') is out of the range in the data (1 to ', &
+         &  ncol, ')'
+    stop 1
+  end if
+  
+  ! Store inputs
+  if (driver_config%do_save_inputs) then
+    call save_inputs('inputs.nc', config, single_level, thermodynamics, &
+         &                gas, cloud, aerosol, &
+         &                lat=single_level%skin_temperature*0.0_jprb, &
+         &                lon=single_level%skin_temperature*0.0_jprb, &
+         &                iverbose=driver_config%iverbose)
+  end if
+
+  if (driver_config%use_psrad) then
+#ifdef HAVE_PSRAD
+    ! Allocate memory for the flux profiles, which may include
+    ! arrays of dimension n_bands_sw/n_bands_lw, so must be called
+    ! after setup_radiation
+    call flux%allocate(config, 1, ncol, nlev)
+    
+    ! Call the Pincus & Stevens radiation code - this is basically
+    ! RRTMG for gas absorption, and McICA with constant cloud mixing
+    ! ratio.  Currently the spectral sampling capability is
+    ! unavailable.  Note that the "psrad" subroutine is defined in the
+    ! radiation/radiation_psrad.f90 module, but the core of the code
+    ! is in the rrtm directory.
+    call psrad(ncol, nlev, 1, ncol, config, &
+         &  single_level, thermodynamics, gas, cloud, aerosol, flux)
+#else
+    write(nulout,'(a)') '*** Error: PS-Rad not available'
+    stop
+#endif
+  else
+    ! Setup the non-PSRad radiation scheme: load the coefficients for
+    ! gas and cloud optics, currently from RRTMG
+    call setup_radiation(config)
+
+    ! Ensure the units of the gas mixing ratios are what is required
+    ! by the gas absorption model
+    call set_gas_units(config, gas)
+
+    ! Compute saturation with respect to liquid (needed for aerosol
+    ! hydration) call
+    call thermodynamics%calc_saturation_wrt_liquid(driver_config%istartcol,driver_config%iendcol)
+
+    ! Allocate memory for the flux profiles, which may include arrays
+    ! of dimension n_bands_sw/n_bands_lw, so must be called after
+    ! setup_radiation
+    call flux%allocate(config, 1, ncol, nlev)
+
+    ! Option of repeating calculation multiple time for more accurate
+    ! profiling
+    do jrepeat = 1,driver_config%nrepeat
+
+      if (driver_config%do_parallel) then
+        ! Run radiation scheme over blocks of columns in parallel
+        
+        ! Compute number of blocks to process
+        nblock = (driver_config%iendcol - driver_config%istartcol &
+             &  + driver_config%nblocksize) / driver_config%nblocksize
+        
+        !$OMP PARALLEL DO PRIVATE(istartcol, iendcol) SCHEDULE(RUNTIME)
+        do jblock = 1, nblock
+          ! Specify the range of columns to process.
+          istartcol = (jblock-1) * driver_config%nblocksize &
+               &    + driver_config%istartcol
+          iendcol = min(istartcol + driver_config%nblocksize - 1, &
+               &        driver_config%iendcol)
+          
+          if (driver_config%iverbose >= 3) then
+            write(nulout,'(a,i0,a,i0,a,i0)')  'Thread ', omp_get_thread_num(), &
+                 &  ' processing columns ', istartcol, '-', iendcol
+          end if
+        
+          ! Call the SPARTACUS radiation scheme
+          call radiation(ncol, nlev, istartcol, iendcol, config, &
+               &  single_level, thermodynamics, gas, cloud, aerosol, flux)
+        end do
+        !$OMP END PARALLEL DO
+        
+      else
+        ! Run radiation scheme serially
+        if (driver_config%iverbose >= 3) then
+          write(nulout,'(a,i0,a)')  'Processing ', ncol, &
+               ' columns'
+        end if
+        
+        ! Call the SPARTACUS radiation scheme
+        call radiation(ncol, nlev, driver_config%istartcol, driver_config%iendcol, &
+             &  config, single_level, thermodynamics, gas, cloud, aerosol, flux)
+
+      end if
+      
+    end do
+  end if
+    
+  is_out_of_bounds = flux%out_of_physical_bounds(driver_config%istartcol, driver_config%iendcol)
+
+  ! Store the fluxes in the output file
+  call save_fluxes(file_name, config, thermodynamics, flux, &
+       &   iverbose=driver_config%iverbose)
+    
+  if (driver_config%iverbose >= 2) then
+    write(nulout,'(a)') '------------------------------------------------------------------'
+  end if
+
+end program radiation_driver

@@ -1,0 +1,132 @@
+! radiation_ice_optics_yang.f90 - Yang et al. (2013) scheme for ice optical properties
+!
+! Copyright (C) 2016 ECMWF
+!
+! Author:  Robin Hogan
+! Email:   r.j.hogan@ecmwf.int
+! License: see the COPYING file for details
+!
+
+module radiation_ice_optics_yang
+
+  implicit none
+
+! + marine : question : combien de coeff ? a modifier
+  ! The number of ice coefficients depends on the parameterization
+  integer, parameter :: NIceOpticsCoeffsYangSW = 11
+  integer, parameter :: NIceOpticsCoeffsYangLW = 11
+
+contains
+
+  
+  !---------------------------------------------------------------------
+  ! Compute shortwave ice-particle scattering properties using Yang (2013)
+  subroutine calc_ice_optics_yang_sw(nb, coeff, ice_wp, &
+       &  re, od, scat_od, g)
+
+    use parkind1, only : jprb
+    !use yomhook,  only : lhook, dr_hook
+
+    ! Number of bands
+    integer, intent(in)  :: nb
+    ! Coefficients read from a data file
+    real(jprb), intent(in) :: coeff(:,:)
+    ! Ice water path (kg m-2)
+    real(jprb), intent(in) :: ice_wp
+    ! Effective radius (m)
+    real(jprb), intent(in) :: re
+    ! Total optical depth, scattering optical depth and asymmetry factor
+    real(jprb), intent(out) :: od(nb), scat_od(nb), g(nb)
+
+! Local
+
+    ! deff_shape : effective diameter (microns) and its inverse
+    real(jprb), dimension(size(od,1)) :: de, de_um, inv_de_um, inv_de_um_2
+!    real(jprb), dimension(:), allocatable :: de, de_um, inv_de_um, inv_de_um_2
+    ! Ice water path in g m-2
+    real (jprb) :: iwp_gm_2
+    ! densite de la glace (km/m3) 
+    real(jprb) :: rho_ice
+   
+    !real(jprb) :: hook_handle
+
+    !if (lhook) call dr_hook('radiation_ice_optics:calc_ice_optics_baran2016',0,hook_handle)
+
+! Convert to effective diameter
+    de = re * 2.0_jprb  ! from radius to diameter
+    de_um = de * 1.0e6_jprb  ! convert m --> um
+    inv_de_um = 1.0_jprb / de_um
+    inv_de_um_2 = 1.0_jprb / (de_um * de_um)
+    rho_ice = 916.7
+
+    iwp_gm_2 = ice_wp * 1000.0_jprb
+              
+    od      = (3. * ice_wp) / (2. * de * rho_ice) * (2. + coeff(1:nb,1) * inv_de_um) / &
+          & (1. + coeff(1:nb,2) * inv_de_um + coeff(1:nb,3) * inv_de_um_2)
+
+    scat_od = od * (coeff(1:nb,4) + coeff(1:nb,5) * inv_de_um) / (1. + coeff(1:nb,6) * &
+          & inv_de_um + coeff(1:nb,7) * inv_de_um_2)
+
+    g       = (coeff(1:nb,8) + coeff(1:nb,9) * inv_de_um) / (1. + coeff(1:nb,10) * &
+          & inv_de_um + coeff(1:nb,11) * inv_de_um_2)
+
+    !if (lhook) call dr_hook('radiation_ice_optics:calc_ice_optics_yang_sw',1,hook_handle)
+
+  end subroutine calc_ice_optics_yang_sw
+
+
+  !---------------------------------------------------------------------
+  ! Compute longwave ice-particle scattering properties using Yang (2013)
+  subroutine calc_ice_optics_yang_lw(nb, coeff, ice_wp, &
+       &  re, od, scat_od, g)
+
+    use parkind1, only : jprb
+    !use yomhook,  only : lhook, dr_hook
+
+    ! Number of bands
+    integer, intent(in)  :: nb
+    ! Coefficients read from a data file
+    real(jprb), intent(in) :: coeff(:,:)
+    ! Effective radius
+    real(jprb), intent(in) ::  re
+    ! Total optical depth, scattering optical depth and asymmetry factor
+    real(jprb), intent(out) :: od(nb), scat_od(nb), g(nb)
+    ! Ice water path (kg m-2)
+    real(jprb), intent(in) :: ice_wp
+    
+! Local
+
+    ! deff_shape : effective diameter (microns) and its inverse
+    real(jprb), dimension(size(od,1)) :: de, de_um, inv_de_um, inv_de_um_2
+    !real(jprb), dimension(:), allocatable :: de, de_um, inv_de_um, inv_de_um_2
+    ! Ice water path in g m-2
+    real (jprb) :: iwp_gm_2
+    ! densite de la glace (km/m3) 
+    real(jprb) :: rho_ice
+   
+    !real(jprb) :: hook_handle
+
+    !if (lhook) call dr_hook('radiation_ice_optics:calc_ice_optics_yang_lw',0,hook_handle)
+
+    ! Convert to effective diameter
+    de = re * 2.0_jprb 
+    de_um = de * 1.0e6_jprb
+
+    inv_de_um = 1.0_jprb / de_um
+    inv_de_um_2 = 1.0_jprb / (de_um * de_um)
+    rho_ice = 916.7
+              
+    od      = (3. * ice_wp) / (2. * de * rho_ice) * (2. + coeff(1:nb,1) * inv_de_um) / (1. + coeff(1:nb,2) * & 
+              & inv_de_um + coeff(1:nb,3) * inv_de_um_2)
+
+    scat_od = od * (coeff(1:nb,4) + coeff(1:nb,5) * inv_de_um) / (1. + coeff(1:nb,6) * &
+              & inv_de_um + coeff(1:nb,7) * inv_de_um_2)
+
+    g       = (coeff(1:nb,8) + coeff(1:nb,9) * inv_de_um) / (1. + coeff(1:nb,10) * &
+              & inv_de_um + coeff(1:nb,11) * inv_de_um_2)
+
+    !if (lhook) call dr_hook('radiation_ice_optics:calc_ice_optics_yang_lw',1,hook_handle)
+
+  end subroutine calc_ice_optics_yang_lw
+
+end module radiation_ice_optics_yang

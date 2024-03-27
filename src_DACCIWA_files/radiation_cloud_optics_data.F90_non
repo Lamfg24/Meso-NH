@@ -1,0 +1,176 @@
+! radiation_cloud_optics_data.f90 - Type to store cloud optical properties
+!
+! Copyright (C) 2014-2017 ECMWF
+!
+! Author:  Robin Hogan
+! Email:   r.j.hogan@ecmwf.int
+! License: see the COPYING file for details
+!
+
+module radiation_cloud_optics_data
+
+  use parkind1, only : jprb
+
+  implicit none
+
+  !---------------------------------------------------------------------
+  ! This type holds the configuration information to compute
+  ! cloud optical properties
+  type cloud_optics_type
+     ! Band-specific coefficients are provided separately in the
+     ! shortwave and longwave, and are dimensioned (nband,ncoeff),
+     ! where ncoeff depends on the nature of the parameterization
+     real(jprb), allocatable, dimension(:,:) :: &
+          &  liq_coeff_lw, liq_coeff_sw, &
+!+ marine
+!          &  ice_coeff_lw, ice_coeff_sw, &
+          &  ice_coeff_lw_shape_1, ice_coeff_sw_shape_1, &
+          &  ice_coeff_lw_shape_2, ice_coeff_sw_shape_2, &
+          &  ice_coeff_lw_shape_3, ice_coeff_sw_shape_3, &
+          &  ice_coeff_lw_shape_4, ice_coeff_sw_shape_4
+!- marine
+     ! General coefficients are vectors of length ncoeffgen, which
+     ! depends on the nature of the parameterization; note that most
+     ! parameterizations use only band-specific coefficients
+     real(jprb), allocatable, dimension(:) :: &
+          &  liq_coeff_gen, ice_coeff_gen
+
+   contains
+     procedure :: setup => setup_cloud_optics
+
+  end type cloud_optics_type
+
+contains
+
+  !---------------------------------------------------------------------
+  ! Setup cloud optics coefficients by reading them from a file
+!+ marine
+!  subroutine setup_cloud_optics(this, liq_file_name, ice_file_name, &
+!       &                        iverbose)
+  subroutine setup_cloud_optics(this, liq_file_name, &
+                                ice_file_name_shape_1, ice_file_name_shape_2, &
+                                ice_file_name_shape_3, ice_file_name_shape_4, &
+       &                        iverbose)
+!- marine
+
+    use yomhook,  only : lhook, dr_hook
+    use easy_netcdf, only : netcdf_file
+!++cb++ 21/11/19
+!+ marine
+    use modd_param_lima, only : lcrystal_shape, nb_crystal_shape, lecrad_yang
+!--cb--
+!- marine
+
+    class(cloud_optics_type), intent(inout) :: this
+!+ marine
+    integer, intent(in), optional           :: iverbose
+    character(len=*), intent(in)            :: liq_file_name
+!++cb++ les 3 derniers fichiers ice doivent etre optionnels
+    character(len=*), intent(in)            :: ice_file_name_shape_1
+    character(len=*),intent(in)             :: ice_file_name_shape_2, &
+                                               ice_file_name_shape_3, &
+                                               ice_file_name_shape_4 
+    integer :: jsh    ! index for crystal shape
+!- marine
+
+    ! The NetCDF file containing the coefficients
+    type(netcdf_file)  :: file
+    integer            :: iverb
+    real(jprb)         :: hook_handle
+
+    if (lhook) call dr_hook('radiation_cloud_optics_data:setup',0,hook_handle)
+
+    if (present(iverbose)) then
+      iverb = iverbose
+    else
+      iverb = 2
+    end if
+
+    ! Open the droplet scattering file and configure the way it is
+    ! read
+    call file%open(trim(liq_file_name), iverbose=iverb)
+    call file%transpose_matrices()
+
+    ! Read the band-specific coefficients
+    call file%get('coeff_lw',this%liq_coeff_lw)
+    call file%get('coeff_sw',this%liq_coeff_sw)
+
+    ! Read the general  coefficients
+    if (file%exists('coeff_gen')) then
+      call file%get('coeff_gen',this%liq_coeff_gen)
+    end if
+
+    ! Close droplet scattering file
+    call file%close()
+
+!++cb++ 29/11/19 : modification pour eviter dependances circulaires
+!+ marine
+    if (.not.(lecrad_yang)) then
+      ! Open the ice scattering file and configure the way it is read
+      call file%open(trim(ice_file_name_shape_1), iverbose=iverb)
+      call file%transpose_matrices()
+
+      ! Read the band-specific  coefficients
+      call file%get('coeff_lw',this%ice_coeff_lw_shape_1)
+      call file%get('coeff_sw',this%ice_coeff_sw_shape_1)
+
+    else
+
+      do jsh = 1, nb_crystal_shape
+        print*,"jsh",jsh
+        print*,"ice_file_name_shape_2",ice_file_name_shape_2
+        if (jsh == 1) then
+          ! Open the ice scattering file for shape 1 and configure the way it is read
+          call file%open(trim(ice_file_name_shape_1), iverbose=iverb)
+          call file%transpose_matrices()
+
+          ! Read the band-specific  coefficients
+          call file%get('coeff_lw',this%ice_coeff_lw_shape_1)
+          call file%get('coeff_sw',this%ice_coeff_sw_shape_1)
+
+        else if (jsh == 2) then
+          ! Open the ice scattering file for shape 2 and configure the way it is read
+          call file%open(trim(ice_file_name_shape_2), iverbose=iverb)
+          call file%transpose_matrices()
+
+          ! Read the band-specific  coefficients
+          call file%get('coeff_lw',this%ice_coeff_lw_shape_2)
+          call file%get('coeff_sw',this%ice_coeff_sw_shape_2)
+
+        else if (jsh == 3) then
+          ! Open the ice scattering file for shape 3 and configure the way it is read
+          call file%open(trim(ice_file_name_shape_3), iverbose=iverb)
+          call file%transpose_matrices()
+
+          ! Read the band-specific  coefficients
+          call file%get('coeff_lw',this%ice_coeff_lw_shape_3)
+          call file%get('coeff_sw',this%ice_coeff_sw_shape_3)
+
+        else if (jsh == 4) then
+          ! Open the ice scattering file for shape 4 and configure the way it is read
+          call file%open(trim(ice_file_name_shape_4), iverbose=iverb)
+          call file%transpose_matrices()
+
+          ! Read the band-specific  coefficients
+          call file%get('coeff_lw',this%ice_coeff_lw_shape_4)
+          call file%get('coeff_sw',this%ice_coeff_sw_shape_4)
+        end if
+      
+      ! Read the general  coefficients
+        if (file%exists('coeff_gen')) then
+          call file%get('coeff_gen',this%ice_coeff_gen)
+        end if
+        print*,"closing file"
+        ! Close ice scattering file
+        call file%close()
+  
+      end do
+    end if
+!- marine
+!--cb--
+    
+    if (lhook) call dr_hook('radiation_cloud_optics_data:setup',1,hook_handle)
+
+  end subroutine setup_cloud_optics
+
+end module radiation_cloud_optics_data
