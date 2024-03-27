@@ -1,0 +1,8 @@
+#!/bin/sh
+set -x
+set -e      
+rm -f SWAID.1.SEG02* OUT*
+ln -sf  ../local_formation/initial_file* .
+#ln -sf  ../001_prep_ideal_Chem_23h_background/EXSEG1.nam .
+#export MPIRUN="mpirun -np 4" 
+time ${MPIRUN} MESONH${XYZ}
