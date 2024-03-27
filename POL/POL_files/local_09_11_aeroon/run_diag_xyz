@@ -1,0 +1,25 @@
+#!/bin/sh
+set -x
+set -e
+
+for filediag in DIAG_gen.nam 
+
+do
+
+cp $filediag DIAG1.nam
+
+export MPIRUN="mpirun -np 1 " 
+
+time ${MPIRUN} DIAG${XYZ}
+
+sed -i 's/LOCA4.1.AERON.002/LOCA4.1.AERON.003/g' DIAG1.nam
+pwd
+time ${MPIRUN} DIAG${XYZ}
+
+sed -i 's/LOCA4.1.AERON.003/LOCA4.1.AERON.004/g' DIAG1.nam
+pwd
+time ${MPIRUN} DIAG${XYZ}
+
+sed -i 's/LOCA4.1.AERON.004/LOCA4.1.AERON.002/g' DIAG1.nam
+done
+
